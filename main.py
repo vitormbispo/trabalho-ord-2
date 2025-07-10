@@ -92,6 +92,10 @@ def carrega_bucket(rrn:int):
     arq.seek(posicao)
 
     bucket_carregado.profundidade = int.from_bytes(arq.read(TAM_CAMPO))
+    
+    if(bucket_carregado.profundidade == -1): # Bucket excluído
+        return None
+    
     bucket_carregado.quant_chaves = int.from_bytes(arq.read(TAM_CAMPO))
     bucket_carregado.ref = rrn
 
@@ -122,6 +126,7 @@ def buscar_chave_bucket(chave:int, bucket:Bucket):
             return encontrado, pos_chave # Chave, Foi encontrada?, posição onde encontrou
         else:
             pos_chave += 1
+            encontrado = int.from_bytes(arq.read(TAM_CAMPO))
     return None, 0
 
 def excluir_chave_bucket(chave:int, bucket:Bucket):
@@ -131,6 +136,9 @@ def excluir_chave_bucket(chave:int, bucket:Bucket):
         bucket.quant_chaves -= 1
         deslocar_chaves(bucket.chaves,pos)
         escrever_bucket(bucket)
+        return True
+    else:
+        return False
 
 def posicao_bucket(bucket:Bucket):
     return TAM_REG_BUCKET*bucket.ref+TAM_CAB_BUCKETS
@@ -167,9 +175,12 @@ def buscar_chave_diretorio(chave:int,diretorio:Diretorio):
 
 def printar_diretorio(dir:Diretorio):
     print("---- Diretório ----")
+    i = 0
     for bucket in dir.buckets:
+        
         bk = carrega_bucket(bucket)
-        print(f"dir[{bucket}] -> bucket{bk.ref}:{bk.chaves}")
+        print(f"dir[{i}] -> bucket{bk.ref}:{bk.chaves}")
+        i+=1
 
 # Funções de inserção =============================================================================================================
 def gerar_endereco(chave:int,profundidade:int):
@@ -226,6 +237,47 @@ def encontrar_novo_intervalo(bucket:Bucket,dir_prof:int):
 
     return novo_inicio, novo_fim
 
+# Funções de remoção ===========================================================================================================
+
+def excluir_chave(chave:int,dir:Diretorio):
+    endereco = gerar_endereco(chave,dir.profundidade)
+    bucket:Bucket = carrega_bucket(dir.buckets[endereco])
+
+    if excluir_chave_bucket(chave,bucket):
+        tem_amigo, amigo = encontrar_bucket_amigo(bucket,dir)
+        if tem_amigo:
+            bucket_amigo = carrega_bucket(amigo)
+            if(bucket_amigo.quant_chaves + bucket.quant_chaves <= TAM_MAX_BUCKET):
+                combinado = concatena_buckets(bucket,bucket_amigo)
+                escrever_bucket(combinado)
+                dir.buckets[amigo] = endereco
+
+def excluir_bucket(bucket:Bucket):
+    arq:io.TextIOWrapper = open(ARQUIVO_BUCKETS,"rb+")
+    arq.seek(posicao_bucket(bucket))
+    arq.write(int.to_bytes(-1,TAM_CAMPO))
+
+def concatena_buckets(bucket1:Bucket,bucket2:Bucket):
+    novo_bucket = Bucket()
+    novo_bucket.profundidade = bucket1.profundidade - 1
+    novo_bucket.quant_chaves = bucket1.quant_chaves + bucket2.quant_chaves
+    novo_bucket.ref = bucket1.ref
+    novo_bucket.chaves = bucket1.chaves[0:bucket1.quant_chaves] + bucket2.chaves[0:bucket2.quant_chaves]
+    return novo_bucket
+
+def encontrar_bucket_amigo(bucket:Bucket,dir:Diretorio):
+    if dir.profundidade == 0: return None, False
+    if bucket.profundidade < dir.profundidade: return None, False
+
+    end_comum = gerar_endereco(bucket.chaves[0],bucket.profundidade)
+    end_amigo = end_comum ^ 1
+    return True, end_amigo 
+
+#
+#    000 -> 
+#    001 ->
+#    010 ->
+#    011 -> 
 def main():
     dir = inicializar_diretorio()
 
@@ -233,8 +285,10 @@ def main():
     inserir_chave(2,dir)
     inserir_chave(3,dir)
     inserir_chave(4,dir)
-    printar_diretorio(dir)
+    bk = carrega_bucket(1)
+    excluir_chave(1,dir)
     
+    printar_diretorio(dir)
 
 
 if __name__ == "__main__":
