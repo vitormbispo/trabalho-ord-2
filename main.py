@@ -170,6 +170,9 @@ def expandir_diretorio(dir:Diretorio):
 def buscar_chave_diretorio(chave:int,diretorio:Diretorio):
     endereco = gerar_endereco(chave,diretorio.profundidade)
     bucket = carrega_bucket(diretorio.buckets[endereco])
+    
+    if bucket == None: return None, 0
+    
     encontrada = buscar_chave_bucket(chave,bucket)
     return encontrada, bucket
 
@@ -251,6 +254,7 @@ def excluir_chave(chave:int,dir:Diretorio):
                 combinado = concatena_buckets(bucket,bucket_amigo)
                 escrever_bucket(combinado)
                 dir.buckets[amigo] = endereco
+                excluir_bucket(bucket_amigo)
 
 def excluir_bucket(bucket:Bucket):
     arq:io.TextIOWrapper = open(ARQUIVO_BUCKETS,"rb+")
@@ -273,6 +277,17 @@ def encontrar_bucket_amigo(bucket:Bucket,dir:Diretorio):
     end_amigo = end_comum ^ 1
     return True, end_amigo 
 
+def tentar_reduzir_diretorio(dir:Diretorio):
+    novas_referencias = []
+    for i in range(0,len(dir.buckets),2):
+        if dir.buckets[i] == dir.buckets[i+1]:
+            novas_referencias.append(dir.buckets[i])
+        else:
+            return False
+    # Reduzindo
+    dir.buckets = novas_referencias
+    return True
+
 #
 #    000 -> 
 #    001 ->
@@ -285,11 +300,14 @@ def main():
     inserir_chave(2,dir)
     inserir_chave(3,dir)
     inserir_chave(4,dir)
-    bk = carrega_bucket(1)
-    excluir_chave(1,dir)
     
     printar_diretorio(dir)
 
+    expandir_diretorio(dir)
+
+    printar_diretorio(dir)
+    tentar_reduzir_diretorio(dir)
+    printar_diretorio(dir)
 
 if __name__ == "__main__":
     main()
