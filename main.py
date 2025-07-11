@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import io
 import struct
-
+import sys
 TAM_CAB_BUCKETS:int = 2 # Tamanho do cabeçalho do arquivo de buckets
 TAM_MAX_BUCKET:int = 5
 FORMAT_CAMPO:str = "I"
@@ -35,7 +35,7 @@ class Bucket:
         if chaves:
             self.chaves = chaves
         else:
-            self.chaves = [0]*TAM_MAX_BUCKET
+            self.chaves = [-1]*TAM_MAX_BUCKET
         
     ref:int = 0
     profundidade:int = 0 # 4 bytes
@@ -158,7 +158,7 @@ def escrever_bucket(bucket:Bucket):
     buckets.write(int.to_bytes(bucket.quant_chaves,TAM_CAMPO))
 
     for i in range(TAM_MAX_BUCKET):
-        buckets.write(int.to_bytes(bucket.chaves[i],TAM_CAMPO))
+        buckets.write(int.to_bytes(bucket.chaves[i],TAM_CAMPO,signed=True))
     buckets.close()
 
 # Funções diretório ==========================================================================================================
@@ -255,7 +255,6 @@ def excluir_chave(chave:int,dir:Diretorio):
         return True
     return False
 
-
 def tentar_combinar_buckets(bucket:Bucket,endereco:int,dir:Diretorio):
     tem_amigo, amigo = encontrar_bucket_amigo(bucket,dir)
     if tem_amigo:
@@ -314,8 +313,13 @@ def tentar_reduzir_diretorio(dir:Diretorio):
 # Funções de execução =========================================================================================================
 
 def executar_operacoes(nome_arquivo:str,dir:Diretorio):
-    arq:io.TextIOWrapper = open(nome_arquivo,"r")
-    log:io.TextIOWrapper = open(f"log-{nome_arquivo}","w")
+    try:
+        arq:io.TextIOWrapper = open(nome_arquivo,"r")
+        log:io.TextIOWrapper = open(f"log-{nome_arquivo}","w")
+    except FileNotFoundError:
+        print(f"Erro: Arquivo \"{nome_arquivo}\"não encontrado.")
+        return
+    
     linha = arq.readline()
     
     while linha:
@@ -348,9 +352,20 @@ def executar_operacoes(nome_arquivo:str,dir:Diretorio):
             
 
 def main():
-    dir = inicializar_diretorio()
-    executar_operacoes("op100.txt",dir)
-    printar_diretorio(dir)
+    diretorio = inicializar_diretorio()
+    args:list[str] = sys.argv
+    if len(args) <= 2: raise Exception("Argumentos inválidos.\n Uso do programa: [-e, -pd, -pb]") 
+    op = args[1]
+
+    match op:
+        case "-e":
+            if len(args) != 3: raise Exception("Argumentos inválidos.\n Uso: -e [arquivo-operacoes]")
+            executar_operacoes(args[2],diretorio)
+        case "-pd":
+            pass
+        case "-pb":
+            pass
+    printar_diretorio(diretorio)
 
 if __name__ == "__main__":
     main()
