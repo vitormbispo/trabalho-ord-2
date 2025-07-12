@@ -4,15 +4,17 @@ import struct
 import sys
 TAM_CAB_BUCKETS:int = 2 # Tamanho do cabeçalho do arquivo de buckets
 TAM_MAX_BUCKET:int = 5
-FORMAT_CAMPO:str = "I"
+FORMAT_CAMPO:str = "i"
 FORMAT_CAB:str = "H"
 TAM_CAMPO:int = 4
 ARQUIVO_BUCKETS:str = "buckets.dat"
+ARQUIVO_DIRETORIO:str = "diretorio.dat"
 TAM_REG_BUCKET = TAM_CAMPO*2 + TAM_MAX_BUCKET*TAM_CAMPO
 
 @dataclass
 class Diretorio:
     profundidade:int = 0
+    quant_buckets:int = 0
     buckets = []
 
 class Bucket:
@@ -37,16 +39,17 @@ class Bucket:
         else:
             self.chaves = [-1]*TAM_MAX_BUCKET
         
-    ref:int = 0
-    profundidade:int = 0 # 4 bytes
-    quant_chaves:int = 0 # 4 bytes
-    chaves = [0]*TAM_MAX_BUCKET # 4 bytes * TAM_MAX_BUCKET
+    ref:int
+    profundidade:int
+    quant_chaves:int
+    chaves:list
 
 # Inicialização ====================================================================================================================
 def inicializar_diretorio():
     dir:Diretorio = Diretorio() # Cria o diretório
+    arq:io.TextIOWrapper = None
     
-    arq:io.TextIOWrapper = open(ARQUIVO_BUCKETS,"wb+")
+    arq = open(ARQUIVO_BUCKETS,"wb+")
     arq.write(int.to_bytes(1,TAM_CAB_BUCKETS,signed=True))
         
     novo_bucket:Bucket = Bucket()
@@ -78,6 +81,8 @@ def criar_bucket(dir:Diretorio):
 
     for _ in range(TAM_MAX_BUCKET):
         arq.write(int.to_bytes(0,TAM_CAMPO,signed=True))
+
+    dir.quant_buckets += 1
 
     arq.seek(0)
     arq.write(int.to_bytes(quant_buckets+1,TAM_CAB_BUCKETS))
@@ -115,6 +120,7 @@ def dividir_bucket(bucket:Bucket,diretorio:Diretorio):
     bucket.profundidade += 1
     novo_bucket.profundidade = bucket.profundidade
     escrever_bucket(novo_bucket)
+
     redistribuir_chaves(bucket,diretorio)
     
 def buscar_chave_bucket(chave:int, bucket:Bucket):
@@ -188,6 +194,73 @@ def printar_diretorio(dir:Diretorio):
         print(f"dir[{i}] -> bucket{bk.ref}:{bk.chaves}")
         i+=1
 
+def escrever_log_diretorio(dir:Diretorio):
+    log:io.TextIOWrapper = open(f"log-pd-bk{TAM_MAX_BUCKET}.txt","w")
+    log.write("---- Diretório ----\n")
+    
+    i = 0
+    for bucket in dir.buckets:
+        bk = carrega_bucket(bucket)
+        log.write((f"dir[{i}] -> bucket[{bk.ref}]:{bk.chaves}\n"))
+        i+=1
+    log.write("\n")
+    log.write(f"Profundidade = {dir.profundidade}\n")
+    log.write(f"Tamanho atual = {len(dir.buckets)}\n")
+    log.write(f"Total de buckets = {len(dir.buckets)}\n")
+
+def escrever_log_buckets():
+    log:io.TextIOWrapper = open(f"log-pb-bk{TAM_MAX_BUCKET}.txt","w")
+    log.write("---- Buckets ----\n")
+    
+    try:
+        arq:io.TextIOWrapper = open("buckets.dat","rb")
+    except FileNotFoundError:
+        return False
+    
+    tam = int.from_bytes(arq.read(TAM_CAB_BUCKETS))
+
+    for i in range(tam):
+        log.write(f"Bucket {i} ")
+        bucket:Bucket = carrega_bucket(i)
+
+        if bucket == None:
+            log.write(" -- Removido\n\n")
+            continue
+        
+        log.write(f"(Prof = {bucket.profundidade})\n")
+        log.write(f"Conta_chaves = {bucket.quant_chaves}\n")
+        log.write(f"Chaves = {bucket.chaves}\n\n")
+    log.close()
+    return True
+        
+
+
+def escrever_diretorio(diretorio:Diretorio):
+    arq:io.TextIOWrapper = open(ARQUIVO_DIRETORIO,"wb")
+    arq.write(struct.pack(FORMAT_CAMPO,diretorio.profundidade))
+    arq.write(struct.pack(FORMAT_CAMPO,diretorio.quant_buckets))
+    for bucket in diretorio.buckets:
+        arq.write(struct.pack(FORMAT_CAMPO,bucket))
+    arq.close()
+
+def carregar_diretorio(nome_arquivo:str):
+    arq:io.TextIOWrapper
+    try:
+        arq = open(nome_arquivo,"rb")
+    except FileNotFoundError:
+        print(f"Erro: arquivo \"diretorio.dat\" não foi encontrado")
+        return None
+    
+    diretorio_carregado:Diretorio = Diretorio()
+    diretorio_carregado.profundidade = struct.unpack(FORMAT_CAMPO,arq.read(TAM_CAMPO))[0]
+    diretorio_carregado.quant_buckets = struct.unpack(FORMAT_CAMPO,arq.read(TAM_CAMPO))[0]
+    bytes = arq.read(TAM_CAMPO)
+    while(bytes):
+        diretorio_carregado.buckets.append(struct.unpack(FORMAT_CAMPO,bytes)[0])
+        bytes = arq.read(TAM_CAMPO)
+    
+    return diretorio_carregado
+    
 # Funções de inserção =============================================================================================================
 def gerar_endereco(chave:int,profundidade:int):
     val_ret = 0
@@ -262,9 +335,9 @@ def tentar_combinar_buckets(bucket:Bucket,endereco:int,dir:Diretorio):
         if(bucket_amigo.quant_chaves + bucket.quant_chaves <= TAM_MAX_BUCKET):
             combinado = concatena_buckets(bucket,bucket_amigo)
             excluir_bucket(bucket_amigo)
-            escrever_bucket(combinado)
+            dir.quant_buckets -= 1
+            escrever_bucket(combinado) 
             dir.buckets[amigo] = dir.buckets[endereco]
-            
 
             if tentar_reduzir_diretorio(dir):
                 for i in range(0,len(dir.buckets),2):
@@ -328,44 +401,53 @@ def executar_operacoes(nome_arquivo:str,dir:Diretorio):
         entrada = int(campos[1])
         match operacao:
             case "i":
-                log.write(f"Inserção da chave {entrada}: ")
+                log.write(f"> Inserção da chave {entrada}: ")
                 if inserir_chave(entrada,dir):
                     log.write("Sucesso.\n")
                 else:
                     log.write("Falha – Chave duplicada.\n")
             case "b":
                 encontrou, bucket = buscar_chave_diretorio(entrada,dir)
-                log.write(f"Busca pela chave {entrada}: ")
+                log.write(f"> Busca pela chave {entrada}: ")
                 if encontrou:
                     log.write(f"Chave encontrada no bucket {bucket.ref}.\n")
                 else:
                     log.write("Chave não encontrada.\n")
             case "r":
-                log.write(f"Remoção da chave {entrada}: ")
+                log.write(f"> Remoção da chave {entrada}: ")
                 if excluir_chave(entrada,dir):
                     log.write(f"Sucesso.\n")
                 else:
                     log.write(f"Falha - Chave não encontrada.\n")
         linha = arq.readline()
+    log.write("As operações do arquivo op60.txt foram executadas com sucesso!")
     arq.close()
     log.close()
-            
-
+    
+    escrever_diretorio(dir)
+    
 def main():
-    diretorio = inicializar_diretorio()
+    
     args:list[str] = sys.argv
-    if len(args) <= 2: raise Exception("Argumentos inválidos.\n Uso do programa: [-e, -pd, -pb]") 
+    if len(args) < 2: raise Exception("Argumentos inválidos.\n Uso do programa: [-e, -pd, -pb]") 
     op = args[1]
-
+    
     match op:
         case "-e":
             if len(args) != 3: raise Exception("Argumentos inválidos.\n Uso: -e [arquivo-operacoes]")
+            diretorio = inicializar_diretorio()
             executar_operacoes(args[2],diretorio)
         case "-pd":
-            pass
+            diretorio = carregar_diretorio(ARQUIVO_DIRETORIO)
+            if diretorio == None:
+                print("O arquivo \"diretorio.dat\" não foi encontrado")
+                quit()
+
+            escrever_log_diretorio(diretorio)
         case "-pb":
-            pass
-    printar_diretorio(diretorio)
+            if not escrever_log_buckets():
+                print("O arquivo \"buckets.dat\" não foi encontrado")
+                quit()
 
 if __name__ == "__main__":
     main()
