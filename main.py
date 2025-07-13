@@ -4,8 +4,8 @@ import struct
 import sys
 
 FORMAT_CAMPO:str = "i"
-FORMAT_CAB:str = "H"
-TAM_CAB_BUCKETS:int = 2 # Tamanho do cabeçalho do arquivo de buckets
+FORMAT_CAB:str = "Hi"
+TAM_CAB_BUCKETS:int = 8 # Tamanho do cabeçalho do arquivo de buckets
 TAM_MAX_BUCKET:int = 5
 TAM_CAMPO:int = 4
 QUANT_CAMPOS_BUCKET:int = TAM_MAX_BUCKET+2
@@ -52,7 +52,7 @@ def inicializar_diretorio() -> Diretorio:
     dir:Diretorio = Diretorio() # Cria o diretório
     
     arq = open(ARQUIVO_BUCKETS,"wb+")
-    arq.write(struct.pack(FORMAT_CAB,1))
+    arq.write(struct.pack(FORMAT_CAB,1,-1))
         
     novo_bucket:Bucket = Bucket()
     escrever_bucket(novo_bucket)
@@ -65,20 +65,29 @@ def inicializar_diretorio() -> Diretorio:
 # Funções buckets ===============================================================================================================
 def criar_bucket(dir:Diretorio) -> Bucket:
     arq:io.TextIOWrapper = open(ARQUIVO_BUCKETS,"rb+")
-    cab = arq.read(TAM_CAB_BUCKETS)
-    quant_buckets = struct.unpack(FORMAT_CAB,cab)[0]
+    cab = struct.unpack(FORMAT_CAB,arq.read(TAM_CAB_BUCKETS))
+    quant_buckets = cab[0]
+    ped = cab[1]
 
     novo_bucket:Bucket = Bucket()
     novo_bucket.profundidade = dir.profundidade
-    novo_bucket.ref = quant_buckets
+    
+    if ped != -1:
+        novo_bucket.ref = ped
+        arq.seek((ped*TAM_REG_BUCKET)+TAM_CAB_BUCKETS)
+        prox = struct.unpack(f"2{FORMAT_CAMPO}",arq.read(2*TAM_CAMPO))[1]
+        arq.seek(0)
+        arq.write(struct.pack(FORMAT_CAB,quant_buckets,prox))
+    else:
+        novo_bucket.ref = quant_buckets
+        arq.seek(0)
+        arq.write(struct.pack(FORMAT_CAB,quant_buckets+1,ped))
 
     arq.seek(posicao_bucket(novo_bucket))
     arq.write(struct.pack(f"{QUANT_CAMPOS_BUCKET}"+FORMAT_CAMPO,novo_bucket.profundidade,novo_bucket.quant_chaves,*novo_bucket.chaves))
 
     dir.quant_buckets += 1
 
-    arq.seek(0)
-    arq.write(struct.pack(FORMAT_CAB,quant_buckets+1))
     arq.close()
     return novo_bucket
 
@@ -294,8 +303,14 @@ def tentar_combinar_buckets(bucket:Bucket,endereco:int,dir:Diretorio):
 
 def excluir_bucket(bucket:Bucket):
     arq:io.TextIOWrapper = open(ARQUIVO_BUCKETS,"rb+")
+    cab = struct.unpack(FORMAT_CAB,arq.read(TAM_CAB_BUCKETS))
+    quant_buckets = cab[0]
+    ped = cab[1]
+
     arq.seek(posicao_bucket(bucket))
-    arq.write(struct.pack(FORMAT_CAMPO,-1))
+    arq.write(struct.pack(f"2{FORMAT_CAMPO}",-1,ped))
+    arq.seek(0)
+    arq.write(struct.pack(FORMAT_CAB,quant_buckets,bucket.ref))
 
 def concatena_buckets(bucket1:Bucket,bucket2:Bucket):
     novo_bucket = Bucket()
