@@ -2,14 +2,17 @@ from dataclasses import dataclass
 import io
 import struct
 import sys
-TAM_CAB_BUCKETS:int = 2 # Tamanho do cabeçalho do arquivo de buckets
-TAM_MAX_BUCKET:int = 5
+
 FORMAT_CAMPO:str = "i"
 FORMAT_CAB:str = "H"
+TAM_CAB_BUCKETS:int = 2 # Tamanho do cabeçalho do arquivo de buckets
+TAM_MAX_BUCKET:int = 5
 TAM_CAMPO:int = 4
+QUANT_CAMPOS_BUCKET:int = TAM_MAX_BUCKET+2
+TAM_REG_BUCKET:int = QUANT_CAMPOS_BUCKET*TAM_CAMPO
+
 ARQUIVO_BUCKETS:str = "buckets.dat"
 ARQUIVO_DIRETORIO:str = "diretorio.dat"
-TAM_REG_BUCKET = TAM_CAMPO*2 + TAM_MAX_BUCKET*TAM_CAMPO
 
 @dataclass
 class Diretorio:
@@ -45,67 +48,58 @@ class Bucket:
     chaves:list
 
 # Inicialização ====================================================================================================================
-def inicializar_diretorio():
+def inicializar_diretorio() -> Diretorio:
     dir:Diretorio = Diretorio() # Cria o diretório
-    arq:io.TextIOWrapper = None
     
     arq = open(ARQUIVO_BUCKETS,"wb+")
-    arq.write(int.to_bytes(1,TAM_CAB_BUCKETS,signed=True))
+    arq.write(struct.pack(FORMAT_CAB,1))
         
     novo_bucket:Bucket = Bucket()
-    novo_bucket.profundidade = dir.profundidade
-    novo_bucket.ref = 0
     escrever_bucket(novo_bucket)
 
-    dir.buckets.append(0)
+    dir.buckets = [0]
+    dir.quant_buckets = 1
     arq.close()
     return dir
 
 # Funções buckets ===============================================================================================================
-def criar_bucket(dir:Diretorio):
+def criar_bucket(dir:Diretorio) -> Bucket:
     arq:io.TextIOWrapper = open(ARQUIVO_BUCKETS,"rb+")
     cab = arq.read(TAM_CAB_BUCKETS)
-    quant_buckets = 0
-    if cab:
-        quant_buckets = int.from_bytes(cab)    
-        arq.seek((TAM_REG_BUCKET*quant_buckets)+TAM_CAB_BUCKETS)
-    else:
-        arq.write(int.to_bytes(0,TAM_CAB_BUCKETS))
+    quant_buckets = struct.unpack(FORMAT_CAB,cab)[0]
 
     novo_bucket:Bucket = Bucket()
     novo_bucket.profundidade = dir.profundidade
     novo_bucket.ref = quant_buckets
 
-    arq.write(int.to_bytes(novo_bucket.profundidade,TAM_CAMPO,signed=True))
-    arq.write(int.to_bytes(novo_bucket.quant_chaves,TAM_CAMPO))
-
-    for _ in range(TAM_MAX_BUCKET):
-        arq.write(int.to_bytes(0,TAM_CAMPO,signed=True))
+    arq.seek(posicao_bucket(novo_bucket))
+    arq.write(struct.pack(f"{QUANT_CAMPOS_BUCKET}"+FORMAT_CAMPO,novo_bucket.profundidade,novo_bucket.quant_chaves,*novo_bucket.chaves))
 
     dir.quant_buckets += 1
 
     arq.seek(0)
-    arq.write(int.to_bytes(quant_buckets+1,TAM_CAB_BUCKETS))
+    arq.write(struct.pack(FORMAT_CAB,quant_buckets+1))
     arq.close()
     return novo_bucket
 
-def carrega_bucket(rrn:int):
+def carregar_bucket(rrn:int):
     arq:io.TextIOWrapper = open(ARQUIVO_BUCKETS,"rb+")
     bucket_carregado:Bucket = Bucket()
-    
-    posicao = (rrn*TAM_REG_BUCKET)+TAM_CAB_BUCKETS
-    arq.seek(posicao)
+    bucket_carregado.ref = rrn
 
-    bucket_carregado.profundidade = int.from_bytes(arq.read(TAM_CAMPO),signed=True)
+    arq.seek(posicao_bucket(bucket_carregado))
+
+    buffer = arq.read(TAM_REG_BUCKET)
+    pacote = struct.unpack(f"{QUANT_CAMPOS_BUCKET}"+FORMAT_CAMPO,buffer)
+
+    bucket_carregado.profundidade = pacote[0]
     
     if(bucket_carregado.profundidade == -1): # Bucket excluído
         return None
     
-    bucket_carregado.quant_chaves = int.from_bytes(arq.read(TAM_CAMPO),signed=False)
-    bucket_carregado.ref = rrn
+    bucket_carregado.quant_chaves = pacote[1]
+    bucket_carregado.chaves = list(pacote[2:])
 
-    for i in range(bucket_carregado.quant_chaves):
-        bucket_carregado.chaves[i] = int.from_bytes(arq.read(TAM_CAMPO),signed=True)
     return bucket_carregado
 
 def dividir_bucket(bucket:Bucket,diretorio:Diretorio):
@@ -120,23 +114,30 @@ def dividir_bucket(bucket:Bucket,diretorio:Diretorio):
     bucket.profundidade += 1
     novo_bucket.profundidade = bucket.profundidade
     escrever_bucket(novo_bucket)
-
     redistribuir_chaves(bucket,diretorio)
     
 def buscar_chave_bucket(chave:int, bucket:Bucket):
+    try:
+        indice = bucket.chaves.index(chave,0,bucket.quant_chaves)
+        return True, indice
+    except ValueError:
+        return False, 0
+    '''
     arq:io.TextIOBase = open(ARQUIVO_BUCKETS,"rb")
     arq.seek(posicao_bucket(bucket)+TAM_CAMPO*2)
 
-    encontrado = int.from_bytes(arq.read(TAM_CAMPO),signed=True)
+    buffer = arq.read(TAM_CAMPO)
     pos_chave = 0
 
-    while encontrado != None and pos_chave < bucket.quant_chaves:
+    while buffer and pos_chave < bucket.quant_chaves:
+        encontrado = struct.unpack(FORMAT_CAMPO,buffer)[0]
         if encontrado == chave:
             return True, pos_chave # Chave, Foi encontrada?, posição onde encontrou
         else:
             pos_chave += 1
-            encontrado = int.from_bytes(arq.read(TAM_CAMPO),signed=True)
+            buffer = arq.read(TAM_CAMPO)
     return False, 0
+    '''
 
 def excluir_chave_bucket(chave:int, bucket:Bucket):
     chave_encontrada, pos = buscar_chave_bucket(chave,bucket)
@@ -150,97 +151,45 @@ def excluir_chave_bucket(chave:int, bucket:Bucket):
         return False
 
 def posicao_bucket(bucket:Bucket):
-    return TAM_REG_BUCKET*bucket.ref+TAM_CAB_BUCKETS
+    return TAM_REG_BUCKET * bucket.ref + TAM_CAB_BUCKETS
 
 def deslocar_chaves(chaves:list[int],posicao:int):
     for i in range(posicao,len(chaves)-1):
         chaves[i] = chaves[i+1]
+        chaves[i+1] = -1
 
 def escrever_bucket(bucket:Bucket):
     buckets:io.TextIOWrapper = open(ARQUIVO_BUCKETS,"rb+")
     pos = posicao_bucket(bucket)
     buckets.seek(pos)
-    buckets.write(int.to_bytes(bucket.profundidade,TAM_CAMPO))
-    buckets.write(int.to_bytes(bucket.quant_chaves,TAM_CAMPO))
+    buckets.write(struct.pack(f"{QUANT_CAMPOS_BUCKET}"+FORMAT_CAMPO,bucket.profundidade,bucket.quant_chaves,*bucket.chaves))
 
-    for i in range(TAM_MAX_BUCKET):
-        buckets.write(int.to_bytes(bucket.chaves[i],TAM_CAMPO,signed=True))
     buckets.close()
 
 # Funções diretório ==========================================================================================================
 def expandir_diretorio(dir:Diretorio):
     novos_buckets = []
 
-    for i in range(len(dir.buckets)):
+    for i in range(tamanho_diretorio(dir)):
         novos_buckets += [dir.buckets[i]]*2
     dir.buckets = novos_buckets
     dir.profundidade+=1
 
+def tamanho_diretorio(dir:Diretorio):
+    return 2 ** dir.profundidade
+
 def buscar_chave_diretorio(chave:int,diretorio:Diretorio):
     endereco = gerar_endereco(chave,diretorio.profundidade)
-    bucket = carrega_bucket(diretorio.buckets[endereco])
+    bucket = carregar_bucket(diretorio.buckets[endereco])
     
     if bucket == None: return False, None
     
     encontrada,_ = buscar_chave_bucket(chave,bucket)
     return encontrada, bucket
-
-def printar_diretorio(dir:Diretorio):
-    print("---- Diretório ----")
-    i = 0
-    for bucket in dir.buckets:
-        
-        bk = carrega_bucket(bucket)
-        print(f"dir[{i}] -> bucket{bk.ref}:{bk.chaves}")
-        i+=1
-
-def escrever_log_diretorio(dir:Diretorio):
-    log:io.TextIOWrapper = open(f"log-pd-bk{TAM_MAX_BUCKET}.txt","w")
-    log.write("---- Diretório ----\n")
-    
-    i = 0
-    for bucket in dir.buckets:
-        bk = carrega_bucket(bucket)
-        log.write((f"dir[{i}] -> bucket[{bk.ref}]:{bk.chaves}\n"))
-        i+=1
-    log.write("\n")
-    log.write(f"Profundidade = {dir.profundidade}\n")
-    log.write(f"Tamanho atual = {len(dir.buckets)}\n")
-    log.write(f"Total de buckets = {len(dir.buckets)}\n")
-
-def escrever_log_buckets():
-    log:io.TextIOWrapper = open(f"log-pb-bk{TAM_MAX_BUCKET}.txt","w")
-    log.write("---- Buckets ----\n")
-    
-    try:
-        arq:io.TextIOWrapper = open("buckets.dat","rb")
-    except FileNotFoundError:
-        return False
-    
-    tam = int.from_bytes(arq.read(TAM_CAB_BUCKETS))
-
-    for i in range(tam):
-        log.write(f"Bucket {i} ")
-        bucket:Bucket = carrega_bucket(i)
-
-        if bucket == None:
-            log.write(" -- Removido\n\n")
-            continue
-        
-        log.write(f"(Prof = {bucket.profundidade})\n")
-        log.write(f"Conta_chaves = {bucket.quant_chaves}\n")
-        log.write(f"Chaves = {bucket.chaves}\n\n")
-    log.close()
-    return True
-        
-
-
-def escrever_diretorio(diretorio:Diretorio):
+ 
+def escrever_diretorio(dir:Diretorio):
     arq:io.TextIOWrapper = open(ARQUIVO_DIRETORIO,"wb")
-    arq.write(struct.pack(FORMAT_CAMPO,diretorio.profundidade))
-    arq.write(struct.pack(FORMAT_CAMPO,diretorio.quant_buckets))
-    for bucket in diretorio.buckets:
-        arq.write(struct.pack(FORMAT_CAMPO,bucket))
+    arq.write(struct.pack(f"{2+tamanho_diretorio(dir)}"+FORMAT_CAMPO,dir.profundidade,dir.quant_buckets,*dir.buckets))
     arq.close()
 
 def carregar_diretorio(nome_arquivo:str):
@@ -252,13 +201,13 @@ def carregar_diretorio(nome_arquivo:str):
         return None
     
     diretorio_carregado:Diretorio = Diretorio()
+     
     diretorio_carregado.profundidade = struct.unpack(FORMAT_CAMPO,arq.read(TAM_CAMPO))[0]
     diretorio_carregado.quant_buckets = struct.unpack(FORMAT_CAMPO,arq.read(TAM_CAMPO))[0]
-    bytes = arq.read(TAM_CAMPO)
-    while(bytes):
-        diretorio_carregado.buckets.append(struct.unpack(FORMAT_CAMPO,bytes)[0])
-        bytes = arq.read(TAM_CAMPO)
     
+    chaves = struct.unpack(f"{tamanho_diretorio(diretorio_carregado)}"+FORMAT_CAMPO,arq.read(TAM_CAMPO*(tamanho_diretorio(diretorio_carregado))))
+    diretorio_carregado.buckets = list(chaves)
+
     return diretorio_carregado
     
 # Funções de inserção =============================================================================================================
@@ -277,11 +226,10 @@ def gerar_endereco(chave:int,profundidade:int):
 def inserir_chave(chave:int,dir:Diretorio):
     chave_existe,_ = buscar_chave_diretorio(chave,dir)
     if chave_existe: 
-        print("Chave duplicada")
         return False # Chave duplicada
 
     end = gerar_endereco(chave,dir.profundidade)
-    bucket:Bucket = carrega_bucket(dir.buckets[end])
+    bucket:Bucket = carregar_bucket(dir.buckets[end])
 
     if bucket.quant_chaves < TAM_MAX_BUCKET: # Insere
         bucket.chaves[bucket.quant_chaves] = chave
@@ -290,7 +238,6 @@ def inserir_chave(chave:int,dir:Diretorio):
     else:
         dividir_bucket(bucket,dir)
         inserir_chave(chave,dir)
-    printar_diretorio(dir)
     return True
 
 def redistribuir_chaves(bucket:Bucket,diretorio:Diretorio):
@@ -319,7 +266,7 @@ def encontrar_novo_intervalo(bucket:Bucket,dir_prof:int):
 
 def excluir_chave(chave:int,dir:Diretorio):
     endereco = gerar_endereco(chave,dir.profundidade)
-    bucket:Bucket = carrega_bucket(dir.buckets[endereco])
+    bucket:Bucket = carregar_bucket(dir.buckets[endereco])
 
     if bucket == None: return False
 
@@ -331,7 +278,7 @@ def excluir_chave(chave:int,dir:Diretorio):
 def tentar_combinar_buckets(bucket:Bucket,endereco:int,dir:Diretorio):
     tem_amigo, amigo = encontrar_bucket_amigo(bucket,dir)
     if tem_amigo:
-        bucket_amigo = carrega_bucket(dir.buckets[amigo])
+        bucket_amigo = carregar_bucket(dir.buckets[amigo])
         if(bucket_amigo.quant_chaves + bucket.quant_chaves <= TAM_MAX_BUCKET):
             combinado = concatena_buckets(bucket,bucket_amigo)
             excluir_bucket(bucket_amigo)
@@ -341,14 +288,14 @@ def tentar_combinar_buckets(bucket:Bucket,endereco:int,dir:Diretorio):
 
             if tentar_reduzir_diretorio(dir):
                 for i in range(0,len(dir.buckets),2):
-                    tentar_combinar_buckets(carrega_bucket(dir.buckets[i]),i,dir)
+                    tentar_combinar_buckets(carregar_bucket(dir.buckets[i]),i,dir)
             return True
     return False
 
 def excluir_bucket(bucket:Bucket):
     arq:io.TextIOWrapper = open(ARQUIVO_BUCKETS,"rb+")
     arq.seek(posicao_bucket(bucket))
-    arq.write(int.to_bytes(-1,TAM_CAMPO,signed=True))
+    arq.write(struct.pack(FORMAT_CAMPO,-1))
 
 def concatena_buckets(bucket1:Bucket,bucket2:Bucket):
     novo_bucket = Bucket()
@@ -356,7 +303,7 @@ def concatena_buckets(bucket1:Bucket,bucket2:Bucket):
     novo_bucket.quant_chaves = bucket1.quant_chaves + bucket2.quant_chaves
     novo_bucket.ref = bucket1.ref
     novo_bucket.chaves = bucket1.chaves[0:bucket1.quant_chaves] + bucket2.chaves[0:bucket2.quant_chaves]
-    novo_bucket.chaves += [0]*(TAM_MAX_BUCKET-novo_bucket.quant_chaves)
+    novo_bucket.chaves += [-1]*(TAM_MAX_BUCKET-novo_bucket.quant_chaves)
     
     return novo_bucket
 
@@ -384,7 +331,6 @@ def tentar_reduzir_diretorio(dir:Diretorio):
     return not tentar_reduzir_diretorio(dir)
 
 # Funções de execução =========================================================================================================
-
 def executar_operacoes(nome_arquivo:str,dir:Diretorio):
     try:
         arq:io.TextIOWrapper = open(nome_arquivo,"r")
@@ -420,14 +366,58 @@ def executar_operacoes(nome_arquivo:str,dir:Diretorio):
                 else:
                     log.write(f"Falha - Chave não encontrada.\n")
         linha = arq.readline()
-    log.write("As operações do arquivo op60.txt foram executadas com sucesso!")
+    log.write(f"As operações do arquivo {nome_arquivo} foram executadas com sucesso!")
     arq.close()
     log.close()
     
     escrever_diretorio(dir)
+
+# Funções de log ============================================================================================================
+def printar_diretorio(dir:Diretorio):
+    print("---- Diretório ----")
+    i = 0
+    for bucket in dir.buckets:
+        
+        bk = carregar_bucket(bucket)
+        print(f"dir[{i}] -> bucket{bk.ref}:{bk.chaves}")
+        i+=1
+
+def escrever_log_diretorio(dir:Diretorio):
+    log:io.TextIOWrapper = open(f"log-pd-bk{TAM_MAX_BUCKET}.txt","w")
+    log.write("----- Diretório -----\n")
     
-def main():
+    i = 0
+    for bucket in dir.buckets:
+        bk = carregar_bucket(bucket)
+        log.write((f"dir[{i}] = bucket[{bk.ref}]\n"))
+        i+=1
+    log.write(f"\nProfundidade = {dir.profundidade}\nTamanho atual = {len(dir.buckets)}\nTotal de buckets = {dir.quant_buckets}\n")
+
+def escrever_log_buckets():
+    log:io.TextIOWrapper = open(f"log-pb-bk{TAM_MAX_BUCKET}.txt","w")
+    log.write("----- Buckets -----\n")
     
+    try:
+        arq:io.TextIOWrapper = open("buckets.dat","rb")
+    except FileNotFoundError:
+        return False
+    
+    tam = struct.unpack(FORMAT_CAB,arq.read(TAM_CAB_BUCKETS))[0]
+
+    for i in range(tam):
+        log.write(f"Bucket {i} ")
+        bucket:Bucket = carregar_bucket(i)
+
+        if bucket == None:
+            log.write("--> Removido\n\n")
+            continue
+        
+        log.write(f"(Prof = {bucket.profundidade}):\nContaChaves = {bucket.quant_chaves}\nChaves = {bucket.chaves}\n\n")
+    log.close()
+    return True
+
+
+def main():  
     args:list[str] = sys.argv
     if len(args) < 2: raise Exception("Argumentos inválidos.\n Uso do programa: [-e, -pd, -pb]") 
     op = args[1]
@@ -448,6 +438,7 @@ def main():
             if not escrever_log_buckets():
                 print("O arquivo \"buckets.dat\" não foi encontrado")
                 quit()
+            
 
 if __name__ == "__main__":
     main()
