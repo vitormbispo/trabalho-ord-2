@@ -257,11 +257,10 @@ def encontrar_novo_intervalo(bucket:Bucket,dir_prof:int) -> tuple[int,int]:
     return novo_inicio, novo_fim
 
 # Funções de remoção ===========================================================================================================
-
 def excluir_chave(chave:int,dir:Diretorio) -> bool:
     endereco = gerar_endereco(chave,dir.profundidade)
     bucket:Bucket = carregar_bucket(dir.buckets[endereco])
-
+    
     if bucket == None: return False
 
     if excluir_chave_bucket(chave,bucket):
@@ -270,7 +269,7 @@ def excluir_chave(chave:int,dir:Diretorio) -> bool:
     return False
 
 def tentar_combinar_buckets(bucket:Bucket,endereco:int,dir:Diretorio) -> bool:
-    tem_amigo, amigo = encontrar_bucket_amigo(bucket,dir)
+    tem_amigo, amigo = encontrar_bucket_amigo(bucket,dir,endereco)
     if tem_amigo:
         bucket_amigo = carregar_bucket(dir.buckets[amigo])
         if(bucket_amigo.quant_chaves + bucket.quant_chaves <= TAM_MAX_BUCKET):
@@ -308,12 +307,11 @@ def concatena_buckets(bucket1:Bucket,bucket2:Bucket) -> Bucket:
     
     return novo_bucket
 
-def encontrar_bucket_amigo(bucket:Bucket,dir:Diretorio) -> tuple[bool,int]:
+def encontrar_bucket_amigo(bucket:Bucket,dir:Diretorio,endereco:int) -> tuple[bool,int]:
     if dir.profundidade == 0: return False, None
     if bucket.profundidade < dir.profundidade: return False, None
 
-    end_comum = gerar_endereco(bucket.chaves[0],bucket.profundidade)
-    end_amigo = end_comum ^ 1
+    end_amigo = endereco ^ 1
     return True, end_amigo 
 
 def tentar_reduzir_diretorio(dir:Diretorio) -> bool:
@@ -341,7 +339,6 @@ def executar_operacoes(nome_arquivo:str,dir:Diretorio) -> None:
         return
     
     linha = arq.readline()
-    
     while linha:
         campos = linha.split(" ")
         operacao = campos[0]
